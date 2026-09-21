@@ -212,10 +212,12 @@ public class MainActivity extends Activity {
 
 		TextView icon = new TextView(this);
 		icon.setText(glyph);
-		icon.setTextSize(20);
+		icon.setTextSize(22);
 		icon.setTextColor(Theme.GOLD);
 		icon.setGravity(Gravity.CENTER);
-		b.addView(icon);
+		icon.setIncludeFontPadding(false);
+		b.addView(icon, new LinearLayout.LayoutParams(
+				LinearLayout.LayoutParams.MATCH_PARENT, (int) dp(28)));
 
 		TextView name = new TextView(this);
 		name.setText(label);
@@ -266,6 +268,7 @@ public class MainActivity extends Activity {
 				g.setColor(0x14FFFFFF);
 				g.setStroke((int) dp(1), 0x26FFFFFF);
 				icon.setText("⊘");
+				icon.setTextSize(22);
 				icon.setTextColor(Theme.GOLD);
 				label.setText("CPU: Off");
 				label.setTextColor(0xFFC9D0DA);
@@ -273,7 +276,8 @@ public class MainActivity extends Activity {
 			case CPU_FAST:
 				g.setColor(0x1FFFD166);
 				g.setStroke((int) dp(1), 0x88FFD166);
-				icon.setText("▸");
+				icon.setText("⚡");
+				icon.setTextSize(12); // emoji render larger than text glyphs at the same size
 				icon.setTextColor(Theme.GOLD);
 				label.setText("CPU: Fast");
 				label.setTextColor(Theme.GOLD);
@@ -281,7 +285,8 @@ public class MainActivity extends Activity {
 			default:
 				g.setColor(Theme.GOLD);
 				g.setStroke((int) dp(1), Theme.GOLD);
-				icon.setText("✦");
+				icon.setText("💡");
+				icon.setTextSize(12);
 				icon.setTextColor(0xFF0A0E14);
 				label.setText("CPU: Hard");
 				label.setTextColor(0xFF0A0E14);
