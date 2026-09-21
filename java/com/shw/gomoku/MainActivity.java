@@ -36,7 +36,7 @@ public class MainActivity extends Activity {
 	private BoardView board;
 	private PlayerCard youCard, cpuCard;
 	private TextView status, scoreValue;
-	private LinearLayout cpuBtn;
+	private TextView cpuBtn;
 	private SharedPreferences prefs;
 
 	private int humanColor = Engine.BLACK;
@@ -145,14 +145,15 @@ public class MainActivity extends Activity {
 		column.addView(middle, new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-		// controls: one row — New Game, Undo, Swap Sides, CPU effort
+		// controls: one row of single-word buttons
 		LinearLayout controls = new LinearLayout(this);
 		controls.setOrientation(LinearLayout.HORIZONTAL);
 		controls.setPadding(0, (int) dp(14), 0, 0);
-		controls.addView(pill("↺", "New Game", this::newGame));
-		controls.addView(pill("↶", "Undo", this::undo));
-		controls.addView(pill("⇄", "Swap Sides", this::swapSides));
-		cpuBtn = buttonBody("✦", "CPU: Hard", this::cycleCpu);
+		controls.addView(pill("New", this::newGame));
+		controls.addView(pill("Undo", this::undo));
+		controls.addView(pill("Swap", this::swapSides));
+		cpuBtn = buttonBase("Hard");
+		cpuBtn.setOnClickListener(v -> cycleCpu());
 		controls.addView(cpuBtn);
 		column.addView(controls);
 
@@ -201,44 +202,28 @@ public class MainActivity extends Activity {
 		return box;
 	}
 
-	/** Build the shared icon+label body of a button. */
-	private LinearLayout buttonBody(String glyph, String label, Runnable action) {
-		LinearLayout b = new LinearLayout(this);
-		b.setOrientation(LinearLayout.VERTICAL);
-		b.setGravity(Gravity.CENTER);
-		b.setPadding((int) dp(4), (int) dp(11), (int) dp(4), (int) dp(11));
-		b.setClickable(true);
-		b.setOnClickListener(v -> action.run());
-
-		TextView icon = new TextView(this);
-		icon.setText(glyph);
-		icon.setTextSize(22);
-		icon.setTextColor(Theme.GOLD);
-		icon.setGravity(Gravity.CENTER);
-		icon.setIncludeFontPadding(false);
-		b.addView(icon, new LinearLayout.LayoutParams(
-				LinearLayout.LayoutParams.MATCH_PARENT, (int) dp(28)));
-
-		TextView name = new TextView(this);
-		name.setText(label);
-		name.setTextSize(11);
-		name.setTextColor(0xFFC9D0DA);
-		name.setGravity(Gravity.CENTER);
-		name.setSingleLine(true);
-		name.setPadding(0, (int) dp(3), 0, 0);
-		b.addView(name);
-
+	/** A single-word button: shared sizing, no icon. */
+	private TextView buttonBase(String label) {
+		TextView t = new TextView(this);
+		t.setText(label);
+		t.setTextSize(15);
+		t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+		t.setTextColor(0xFFC9D0DA);
+		t.setGravity(Gravity.CENTER);
+		t.setPadding(0, (int) dp(16), 0, (int) dp(16));
+		t.setClickable(true);
 		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
 				LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-		lp.setMargins((int) dp(4), 0, (int) dp(4), 0);
-		b.setLayoutParams(lp);
-		return b;
+		lp.setMargins((int) dp(5), 0, (int) dp(5), 0);
+		t.setLayoutParams(lp);
+		return t;
 	}
 
-	private View pill(String glyph, String label, Runnable action) {
-		LinearLayout b = buttonBody(glyph, label, action);
-		b.setBackground(pillBackground());
-		return b;
+	private TextView pill(String label, Runnable action) {
+		TextView t = buttonBase(label);
+		t.setOnClickListener(v -> action.run());
+		t.setBackground(pillBackground());
+		return t;
 	}
 
 	private StateListDrawable pillBackground() {
@@ -261,35 +246,24 @@ public class MainActivity extends Activity {
 	private void applyCpuStyle() {
 		GradientDrawable g = new GradientDrawable();
 		g.setCornerRadius(dp(18));
-		TextView icon = (TextView) cpuBtn.getChildAt(0);
-		TextView label = (TextView) cpuBtn.getChildAt(1);
 		switch (cpuMode) {
 			case CPU_OFF:
 				g.setColor(0x14FFFFFF);
 				g.setStroke((int) dp(1), 0x26FFFFFF);
-				icon.setText("⊘");
-				icon.setTextSize(22);
-				icon.setTextColor(Theme.GOLD);
-				label.setText("CPU: Off");
-				label.setTextColor(0xFFC9D0DA);
+				cpuBtn.setText("Off");
+				cpuBtn.setTextColor(Theme.GOLD);
 				break;
 			case CPU_FAST:
 				g.setColor(0x1FFFD166);
 				g.setStroke((int) dp(1), 0x88FFD166);
-				icon.setText("⚡");
-				icon.setTextSize(12); // emoji render larger than text glyphs at the same size
-				icon.setTextColor(Theme.GOLD);
-				label.setText("CPU: Fast");
-				label.setTextColor(Theme.GOLD);
+				cpuBtn.setText("Fast");
+				cpuBtn.setTextColor(Theme.GOLD);
 				break;
 			default:
 				g.setColor(Theme.GOLD);
 				g.setStroke((int) dp(1), Theme.GOLD);
-				icon.setText("💡");
-				icon.setTextSize(12);
-				icon.setTextColor(0xFF0A0E14);
-				label.setText("CPU: Hard");
-				label.setTextColor(0xFF0A0E14);
+				cpuBtn.setText("Hard");
+				cpuBtn.setTextColor(0xFF0A0E14);
 				break;
 		}
 		cpuBtn.setBackground(g);
