@@ -24,12 +24,26 @@ public final class Engine {
 	private static final int VCF_DEPTH = 14;
 	private static final int[] NO_PHANTOMS = new int[0];
 
+	// --- transposition table (shared: one search runs at a time) ---
+	private static final int TT_BITS = 19;
+	private static final int TT_SIZE = 1 << TT_BITS;
+	private static final int TT_MASK = TT_SIZE - 1;
+	private static final long[] TT_KEY = new long[TT_SIZE];
+	private static final int[] TT_VAL = new int[TT_SIZE];
+	private static final int[] TT_MOVE = new int[TT_SIZE];
+	private static final byte[] TT_DEPTH = new byte[TT_SIZE];
+	private static final byte[] TT_FLAG = new byte[TT_SIZE]; // 0 empty, 1 exact, 2 lower, 3 upper
+	private static final byte F_EXACT = 1, F_LOWER = 2, F_UPPER = 3;
+	private static final int MATE_THRESHOLD = WIN / 2;
+
 	/** every length-5 segment on the board, as five cell indices */
 	private static final int[][] WINDOWS;
 	/** for each cell, the ids of the windows that contain it */
 	private static final int[][] CELL_WINDOWS;
 	/** for each cell, cells within Chebyshev distance 2 (used for candidacy) */
 	private static final int[][] NEI;
+	/** Zobrist key for [cell][colour-1] */
+	private static final long[][] ZOB = new long[N * N][2];
 
 	static {
 		ArrayList<int[]> ws = new ArrayList<>();
@@ -65,6 +79,10 @@ public final class Engine {
 				for (int i = 0; i < a.length; i++) a[i] = list.get(i);
 				NEI[y * N + x] = a;
 			}
+
+		java.util.Random zr = new java.util.Random(0x5EEDC0DEL);
+		for (int i = 0; i < N * N; i++)
+			for (int c = 0; c < 2; c++) ZOB[i][c] = zr.nextLong();
 	}
 
 	private final int[] board = new int[N * N];
@@ -83,10 +101,18 @@ public final class Engine {
 	private volatile int[] phantom = NO_PHANTOMS;
 	private long deadline;
 	private int nodes;
+	/** Zobrist hash of the committed + speculative position */
+	private long hash;
+	/** toggle for A/B measurement */
+	public boolean ttEnabled = true;
+	/** diagnostics from the last bestMove() */
+	public int lastDepth, lastNodes;
 
 	private final int[] tmpIdx = new int[N * N];
 	private final int[] tmpScore = new int[N * N];
 	private final int[] cand = new int[N * N];
+	/** per-ply copy of the ordered candidate list; `generate` reuses `cand` */
+	private final int[][] level = new int[64][N * N];
 
 	private static final class TimeUp extends RuntimeException {
 		@Override public synchronized Throwable fillInStackTrace() { return this; }
@@ -100,6 +126,22 @@ public final class Engine {
 		for (int[] row : wc) java.util.Arrays.fill(row, 0);
 		total = 0;
 		stones = 0;
+		hash = 0;
+		clearTT();
+	}
+
+	/** Empty the transposition table. */
+	public static void clearTT() {
+		java.util.Arrays.fill(TT_FLAG, (byte) 0);
+	}
+
+	/** Recompute the Zobrist hash from the board and fail loudly on drift. */
+	public void verifyHash() {
+		long h = 0;
+		for (int i = 0; i < board.length; i++)
+			if (board[i] != EMPTY) h ^= ZOB[i][board[i] - 1];
+		if (h != hash)
+			throw new IllegalStateException("hash " + hash + " != recomputed " + h);
 	}
 
 	public int get(int idx) { return board[idx]; }
@@ -160,6 +202,7 @@ public final class Engine {
 	private void addStone(int idx, int color) {
 		board[idx] = color;
 		stones++;
+		hash ^= ZOB[idx][color - 1];
 		if (searching) {
 			if (pathLen < path.length) path[pathLen] = idx;
 			pathLen++;
@@ -178,6 +221,7 @@ public final class Engine {
 		int color = board[idx];
 		board[idx] = EMPTY;
 		stones--;
+		hash ^= ZOB[idx][color - 1];
 		if (searching && pathLen > 0) pathLen--;
 		int[] cw = CELL_WINDOWS[idx];
 		for (int i = 0; i < cw.length; i++) {
@@ -356,6 +400,7 @@ public final class Engine {
 
 			// 4. iterative-deepening alpha-beta
 			nodes = 0;
+			lastDepth = 0;
 			int best = -1;
 			int firstMove = 0;
 			for (int depth = 2; depth <= 12; depth += 2) {
@@ -364,6 +409,7 @@ public final class Engine {
 					if (m >= 0) {
 						best = m;
 						firstMove = m;
+						lastDepth = depth;
 					}
 				} catch (TimeUp t) {
 					break;
@@ -376,6 +422,7 @@ public final class Engine {
 			searching = false;
 			pathLen = 0;
 			phantom = NO_PHANTOMS;
+			lastNodes = nodes;
 		}
 	}
 
@@ -406,9 +453,11 @@ public final class Engine {
 			int t = cand[0]; cand[0] = cand[i]; cand[i] = t;
 			break;
 		}
-		int alpha = -INF, bestIdx = cand[0];
+		int[] moves = level[0];
+		System.arraycopy(cand, 0, moves, 0, n);
+		int alpha = -INF, bestIdx = moves[0];
 		for (int i = 0; i < n; i++) {
-			int idx = cand[i];
+			int idx = moves[i];
 			addStone(idx, me);
 			int val;
 			try {
@@ -427,12 +476,33 @@ public final class Engine {
 
 	private int negamax(int depth, int alpha, int beta, int player, int ply) {
 		if ((++nodes & 511) == 0 && System.nanoTime() > deadline) throw TIME_UP;
+		int alpha0 = alpha;
+		int slot = (int) (hash & TT_MASK);
+		int ttMove = 0;
+		if (ttEnabled && TT_FLAG[slot] != 0 && TT_KEY[slot] == hash) {
+			ttMove = TT_MOVE[slot];
+			if (TT_DEPTH[slot] >= depth) {
+				int v = fromTT(TT_VAL[slot], ply);
+				byte f = TT_FLAG[slot];
+				if (f == F_EXACT) return v;
+				if (f == F_LOWER && v >= beta) return v;
+				if (f == F_UPPER && v <= alpha) return v;
+			}
+		}
 		if (depth <= 0) return evalFor(player);
 		int n = generate(player, depth >= 6 ? 14 : 10);
 		if (n == 0) return evalFor(player);
-		int best = -INF;
+		if (ttMove != 0) {
+			for (int i = 0; i < n; i++) if (cand[i] == ttMove) {
+				int t = cand[0]; cand[0] = cand[i]; cand[i] = t;
+				break;
+			}
+		}
+		int[] moves = level[ply];
+		System.arraycopy(cand, 0, moves, 0, n);
+		int best = -INF, bestIdx = moves[0];
 		for (int i = 0; i < n; i++) {
-			int idx = cand[i];
+			int idx = moves[i];
 			addStone(idx, player);
 			int val;
 			try {
@@ -441,15 +511,88 @@ public final class Engine {
 			} finally {
 				removeStone(idx);
 			}
-			if (val > best) best = val;
+			if (val > best) { best = val; bestIdx = idx; }
 			if (best > alpha) alpha = best;
 			if (alpha >= beta) break;
+		}
+		if (ttEnabled && (TT_FLAG[slot] == 0 || TT_KEY[slot] == hash || depth >= TT_DEPTH[slot])) {
+			TT_KEY[slot] = hash;
+			TT_VAL[slot] = toTT(best, ply);
+			TT_MOVE[slot] = bestIdx;
+			TT_DEPTH[slot] = (byte) Math.min(127, depth);
+			TT_FLAG[slot] = (byte) (best <= alpha0 ? F_UPPER : (best >= beta ? F_LOWER : F_EXACT));
 		}
 		return best;
 	}
 
 	private int evalFor(int player) {
 		return player == BLACK ? total : -total;
+	}
+
+	/**
+	 * Mate scores are stored relative to the node, not the root, so a win found
+	 * at one ply isn't reused as a win at a different ply.
+	 */
+	private static int toTT(int v, int ply) {
+		if (v > MATE_THRESHOLD) return v + ply;
+		if (v < -MATE_THRESHOLD) return v - ply;
+		return v;
+	}
+
+	private static int fromTT(int v, int ply) {
+		if (v > MATE_THRESHOLD) return v - ply;
+		if (v < -MATE_THRESHOLD) return v + ply;
+		return v;
+	}
+
+	/** Fixed-depth search returning the node count; for A/B measurement. */
+	public int lastBenchMove;
+	public int benchFixedDepth(int me, int depth) {
+		clearTT();
+		nodes = 0;
+		deadline = Long.MAX_VALUE;
+		searching = true;
+		try {
+			lastBenchMove = rootSearch(me, depth, 0);
+		} finally {
+			searching = false;
+			pathLen = 0;
+			phantom = NO_PHANTOMS;
+		}
+		return nodes;
+	}
+
+	/** Iterative deepening to `maxDepth`, returning total nodes; for A/B measurement. */
+	public int benchIterative(int me, int maxDepth) {
+		clearTT();
+		nodes = 0;
+		deadline = Long.MAX_VALUE;
+		searching = true;
+		int first = 0;
+		try {
+			for (int d = 2; d <= maxDepth; d += 2) first = rootSearch(me, d, first);
+		} finally {
+			searching = false;
+			pathLen = 0;
+			phantom = NO_PHANTOMS;
+		}
+		return nodes;
+	}
+
+	/** Exact value of a specific root move at a fixed depth, TT disabled (ground truth). */
+	public int evalMove(int me, int move, int depth) {
+		boolean saved = ttEnabled;
+		ttEnabled = false;
+		deadline = Long.MAX_VALUE;
+		addStone(move, me);
+		int v;
+		try {
+			v = isFive(move, me) ? WIN : -negamax(depth - 1, -INF, INF, 3 - me, 1);
+		} finally {
+			removeStone(move);
+			ttEnabled = saved;
+		}
+		return v;
 	}
 
 	// ----------------------------------------------------------------- VCF

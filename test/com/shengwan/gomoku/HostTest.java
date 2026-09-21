@@ -143,6 +143,7 @@ public class HostTest {
 				if (e.stoneCount() != beforeCount || !e.signature().equals(before)) { ok = false; break; }
 				if (m < 0 || m >= Engine.N * Engine.N || e.get(m) != Engine.EMPTY) { ok = false; break; }
 				e.verify();
+				e.verifyHash();
 			}
 			check("search leaks no phantom stones on forced timeouts", ok);
 		}
@@ -184,6 +185,56 @@ public class HostTest {
 			int[] after = e.phantomSnapshot();
 			check("engine publishes live search path (" + maxLen + " deep) and clears it",
 					saw && maxLen >= 1 && after.length == 0);
+		}
+		// 12. transposition table: same answer, fewer nodes at fixed depth
+		{
+			Engine e = new Engine();
+			int[] setup = {idx(7, 7), idx(8, 8), idx(6, 6), idx(9, 7), idx(7, 9),
+					idx(5, 8), idx(8, 5), idx(6, 10), idx(10, 6), idx(4, 4)};
+			for (int i = 0; i < setup.length; i++)
+				e.place(setup[i], (i % 2 == 0) ? Engine.BLACK : Engine.WHITE);
+			e.ttEnabled = true;
+			int nTT = e.benchFixedDepth(Engine.BLACK, 6);
+			int mTT = e.lastBenchMove;
+			e.ttEnabled = false;
+			int nNo = e.benchFixedDepth(Engine.BLACK, 6);
+			int mNo = e.lastBenchMove;
+			check("TT cuts nodes at fixed depth (" + nNo + " -> " + nTT + ")", nTT < nNo);
+			check("TT keeps the same best move", mTT == mNo);
+		}
+		// 13. Zobrist hash always matches the board
+		{
+			Engine e = new Engine();
+			java.util.Random rnd = new java.util.Random(11);
+			boolean ok = true;
+			for (int i = 0; i < 40 && ok; i++) {
+				int idx;
+				do { idx = rnd.nextInt(Engine.N * Engine.N); } while (e.get(idx) != Engine.EMPTY);
+				e.place(idx, (i % 2 == 0) ? Engine.BLACK : Engine.WHITE);
+				try { e.verifyHash(); } catch (IllegalStateException ex) { ok = false; }
+			}
+			check("Zobrist hash matches the board after every move", ok);
+		}
+		// 14. known-answer: at fixed depth the search must pick a truly optimal move
+		// (this is what caught the shared-scratch-buffer aliasing bug)
+		{
+			Engine e = new Engine();
+			int[] setup = {idx(7, 7), idx(8, 8), idx(6, 6), idx(9, 7), idx(7, 9),
+					idx(5, 8), idx(8, 5), idx(6, 10), idx(10, 6), idx(4, 4)};
+			for (int i = 0; i < setup.length; i++)
+				e.place(setup[i], (i % 2 == 0) ? Engine.BLACK : Engine.WHITE);
+			e.ttEnabled = true;
+			e.benchFixedDepth(Engine.BLACK, 6);
+			int chosen = e.lastBenchMove;
+			int vChosen = e.evalMove(Engine.BLACK, chosen, 6);
+			int trueBest = -Integer.MAX_VALUE / 2;
+			for (int c = 0; c < Engine.N * Engine.N; c++) {
+				if (e.get(c) != Engine.EMPTY) continue;
+				int v = e.evalMove(Engine.BLACK, c, 6);
+				if (v > trueBest) trueBest = v;
+			}
+			check("search picks an optimal root move (" + vChosen + " == " + trueBest + ")",
+					vChosen == trueBest);
 		}
 		System.out.println(failures == 0 ? "ALL PASS" : failures + " FAILURES");
 		if (failures != 0) System.exit(1);
