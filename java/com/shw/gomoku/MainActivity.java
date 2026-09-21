@@ -36,6 +36,7 @@ public class MainActivity extends Activity {
 
 	private BoardView board;
 	private TextView cpuBtn;
+	private TextView swapBtn;
 	private SharedPreferences prefs;
 
 	private int humanColor = Engine.BLACK;
@@ -119,7 +120,8 @@ public class MainActivity extends Activity {
 		LinearLayout top = new LinearLayout(this);
 		top.setOrientation(LinearLayout.HORIZONTAL);
 		top.addView(pill("New", this::newGame));
-		top.addView(pill("Swap", this::swapSides));
+		swapBtn = pill("Swap", this::swapSides);
+		top.addView(swapBtn);
 		LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
 		tlp.bottomMargin = (int) dp(10);
@@ -233,6 +235,29 @@ public class MainActivity extends Activity {
 				break;
 		}
 		cpuBtn.setBackground(g);
+	}
+
+	/**
+	 * Swap button carries the human's stone colour, so it doubles as the "who
+	 * opens" cue: black fills you in as first player, white as second.
+	 */
+	private void applySwapStyle() {
+		boolean black = humanColor == Engine.BLACK;
+		GradientDrawable normal = new GradientDrawable();
+		normal.setCornerRadius(dp(18));
+		normal.setColor(black ? 0xFF1A1E25 : 0xFFEDEFF3);
+		normal.setStroke((int) dp(1), black ? 0x66FFFFFF : 0x33000000);
+
+		GradientDrawable pressed = new GradientDrawable();
+		pressed.setCornerRadius(dp(18));
+		pressed.setColor(black ? 0xFF2A3038 : 0xFFFFFFFF);
+		pressed.setStroke((int) dp(1), 0x88FFD166);
+
+		StateListDrawable s = new StateListDrawable();
+		s.addState(new int[]{android.R.attr.state_pressed}, pressed);
+		s.addState(new int[]{}, normal);
+		swapBtn.setBackground(s);
+		swapBtn.setTextColor(black ? 0xFFEDEFF3 : 0xFF14181F);
 	}
 
 	// --------------------------------------------------------------- game flow
@@ -370,6 +395,7 @@ public class MainActivity extends Activity {
 		board.setGhostBlack(turn == Engine.BLACK);
 		board.setInputEnabled(!gameOver && !thinking && (!cpuOn() || turn == humanColor));
 		applyCpuStyle();
+		applySwapStyle();
 
 		if (!thinking) {
 			uiHandler.removeCallbacks(phantomPoller);
