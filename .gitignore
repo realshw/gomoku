@@ -1,0 +1,4 @@
+.build/
+.htest/
+*.apk
+*.apk.idsig

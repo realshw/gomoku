@@ -1,0 +1,366 @@
+package com.shengwan.gomoku;
+
+import android.app.Activity;
+import android.content.SharedPreferences;
+import android.graphics.Insets;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.view.WindowInsets;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class MainActivity extends Activity {
+
+	private static final int THINK_MS = 1500;
+
+	private final Engine engine = new Engine();
+	private final List<Integer> history = new ArrayList<>();
+
+	private BoardView board;
+	private PlayerCard youCard, cpuCard;
+	private TextView status, scoreValue;
+	private SharedPreferences prefs;
+
+	private int humanColor = Engine.BLACK;
+	private int youWins, cpuWins;
+	private boolean thinking, gameOver;
+
+	private final Handler uiHandler = new Handler(Looper.getMainLooper());
+	/** While the CPU thinks, sample its search path and show it faded on the board. */
+	private final Runnable phantomPoller = new Runnable() {
+		@Override public void run() {
+			if (!thinking) return;
+			board.setSearchPhantoms(engine.phantomSnapshot(), 3 - humanColor);
+			board.invalidate();
+			uiHandler.postDelayed(this, 40);
+		}
+	};
+
+	@Override protected void onCreate(Bundle b) {
+		super.onCreate(b);
+		prefs = getSharedPreferences("gomoku", MODE_PRIVATE);
+		humanColor = prefs.getInt("human", Engine.BLACK);
+		youWins = prefs.getInt("you", 0);
+		cpuWins = prefs.getInt("cpu", 0);
+		buildUi();
+		newGame();
+	}
+
+	@Override protected void onPause() {
+		super.onPause();
+		uiHandler.removeCallbacks(phantomPoller);
+		board.clearPhantom();
+		board.clearSearchPhantoms();
+	}
+
+	/**
+	 * Invariant: the engine's committed board must match the move history, and
+	 * its incremental evaluation must match a recomputation. Phantom stones
+	 * (search placements, hover preview) must never survive into this state.
+	 */
+	private void checkCommitted() {
+		engine.verify();
+		if (engine.stoneCount() != history.size())
+			throw new IllegalStateException("committed stones " + engine.stoneCount()
+					+ " != move history " + history.size());
+	}
+
+	private float dp(float v) { return v * getResources().getDisplayMetrics().density; }
+
+	// ------------------------------------------------------------------ layout
+
+	private void buildUi() {
+		FrameLayout root = new FrameLayout(this);
+		root.addView(new Backdrop(this), new FrameLayout.LayoutParams(
+				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+		LinearLayout column = new LinearLayout(this);
+		column.setOrientation(LinearLayout.VERTICAL);
+		root.addView(column, new FrameLayout.LayoutParams(
+				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+		applyInsets(root, column);
+
+		// header: you | score | cpu
+		LinearLayout header = new LinearLayout(this);
+		header.setOrientation(LinearLayout.HORIZONTAL);
+		header.setGravity(Gravity.CENTER_VERTICAL);
+
+		youCard = new PlayerCard(this);
+		cpuCard = new PlayerCard(this);
+		cpuCard.setName("CPU");
+
+		int cardH = (int) dp(76);
+		header.addView(youCard, new LinearLayout.LayoutParams(0, cardH, 1f));
+		header.addView(scoreBox(), new LinearLayout.LayoutParams(
+				LinearLayout.LayoutParams.WRAP_CONTENT, cardH));
+		header.addView(cpuCard, new LinearLayout.LayoutParams(0, cardH, 1f));
+		column.addView(header);
+
+		status = new TextView(this);
+		status.setTextSize(14);
+		status.setTextColor(Theme.MUTED);
+		status.setGravity(Gravity.CENTER);
+		status.setPadding(0, (int) dp(14), 0, (int) dp(6));
+		column.addView(status);
+
+		FrameLayout middle = new FrameLayout(this);
+		board = new BoardView(this);
+		board.setListener(this::onHumanCell);
+		FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
+				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+		blp.gravity = Gravity.CENTER;
+		middle.addView(board, blp);
+		column.addView(middle, new LinearLayout.LayoutParams(
+				LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+		LinearLayout controls = new LinearLayout(this);
+		controls.setOrientation(LinearLayout.HORIZONTAL);
+		controls.setPadding(0, (int) dp(16), 0, 0);
+		controls.addView(pill("↺", "New Game", this::newGame));
+		controls.addView(pill("↶", "Undo", this::undo));
+		controls.addView(pill("⇄", "Swap Sides", this::swapSides));
+		column.addView(controls);
+
+		setContentView(root);
+	}
+
+	private void applyInsets(View root, LinearLayout column) {
+		final int l = (int) dp(16), t = (int) dp(14), r = (int) dp(16), b = (int) dp(18);
+		root.setOnApplyWindowInsetsListener((v, insets) -> {
+			int sl = 0, st = 0, sr = 0, sb = 0;
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+				Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
+				sl = bars.left; st = bars.top; sr = bars.right; sb = bars.bottom;
+			} else {
+				sl = insets.getSystemWindowInsetLeft();
+				st = insets.getSystemWindowInsetTop();
+				sr = insets.getSystemWindowInsetRight();
+				sb = insets.getSystemWindowInsetBottom();
+			}
+			column.setPadding(l + sl, t + st, r + sr, b + sb);
+			return insets;
+		});
+		root.requestApplyInsets();
+	}
+
+	private View scoreBox() {
+		LinearLayout box = new LinearLayout(this);
+		box.setOrientation(LinearLayout.VERTICAL);
+		box.setGravity(Gravity.CENTER);
+		box.setPadding((int) dp(12), 0, (int) dp(12), 0);
+
+		scoreValue = new TextView(this);
+		scoreValue.setTextSize(22);
+		scoreValue.setTextColor(Theme.GOLD);
+		scoreValue.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+		scoreValue.setGravity(Gravity.CENTER);
+		box.addView(scoreValue);
+
+		TextView cap = new TextView(this);
+		cap.setText("SCORE");
+		cap.setTextSize(9);
+		cap.setLetterSpacing(0.22f);
+		cap.setTextColor(Theme.MUTED);
+		cap.setGravity(Gravity.CENTER);
+		box.addView(cap);
+		return box;
+	}
+
+	private View pill(String glyph, String label, Runnable action) {
+		LinearLayout b = new LinearLayout(this);
+		b.setOrientation(LinearLayout.VERTICAL);
+		b.setGravity(Gravity.CENTER);
+		b.setPadding((int) dp(6), (int) dp(11), (int) dp(6), (int) dp(11));
+		b.setBackground(pillBackground());
+		b.setClickable(true);
+		b.setOnClickListener(v -> action.run());
+
+		TextView icon = new TextView(this);
+		icon.setText(glyph);
+		icon.setTextSize(20);
+		icon.setTextColor(Theme.GOLD);
+		icon.setGravity(Gravity.CENTER);
+		b.addView(icon);
+
+		TextView name = new TextView(this);
+		name.setText(label);
+		name.setTextSize(12);
+		name.setTextColor(0xFFC9D0DA);
+		name.setGravity(Gravity.CENTER);
+		name.setPadding(0, (int) dp(3), 0, 0);
+		b.addView(name);
+
+		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
+				LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+		lp.setMargins((int) dp(5), 0, (int) dp(5), 0);
+		b.setLayoutParams(lp);
+		return b;
+	}
+
+	private StateListDrawable pillBackground() {
+		GradientDrawable normal = new GradientDrawable(
+				GradientDrawable.Orientation.TOP_BOTTOM,
+				new int[]{0x1AFFFFFF, 0x0AFFFFFF});
+		normal.setCornerRadius(dp(18));
+		normal.setStroke((int) dp(1), 0x26FFFFFF);
+		GradientDrawable pressed = new GradientDrawable();
+		pressed.setColor(0x33FFD166);
+		pressed.setCornerRadius(dp(18));
+		pressed.setStroke((int) dp(1), 0x88FFD166);
+		StateListDrawable s = new StateListDrawable();
+		s.addState(new int[]{android.R.attr.state_pressed}, pressed);
+		s.addState(new int[]{}, normal);
+		return s;
+	}
+
+	// --------------------------------------------------------------- game flow
+
+	private int centre() { return (Engine.N / 2) * Engine.N + Engine.N / 2; }
+
+	private int sideToMove() { return history.size() % 2 == 0 ? Engine.BLACK : Engine.WHITE; }
+
+	private void newGame() {
+		engine.reset();
+		history.clear();
+		gameOver = false;
+		thinking = false;
+		uiHandler.removeCallbacks(phantomPoller);
+		board.clearBoard();
+		if (humanColor == Engine.WHITE) {
+			engine.place(centre(), Engine.BLACK);
+			history.add(centre());
+			board.land(centre(), Engine.BLACK);
+			board.setLastMove(centre());
+			status.setText("CPU opened in the centre.");
+		} else {
+			status.setText("Your move — place a stone.");
+		}
+		updateUi();
+	}
+
+	private void onHumanCell(int idx) {
+		if (gameOver || thinking || sideToMove() != humanColor) return;
+		play(idx, humanColor);
+		if (finishIfWon(idx, humanColor, true)) return;
+		if (history.size() == Engine.N * Engine.N) { draw(); return; }
+		status.setText("CPU is thinking…");
+		updateUi();
+		think();
+	}
+
+	private void play(int idx, int color) {
+		engine.place(idx, color);
+		history.add(idx);
+		board.land(idx, color);
+		board.setLastMove(idx);
+	}
+
+	private boolean finishIfWon(int idx, int color, boolean human) {
+		int[] line = engine.fiveLine(idx, color);
+		if (line == null) return false;
+		gameOver = true;
+		board.setWinLine(line);
+		if (human) {
+			youWins++;
+			status.setText("You win! 🎉");
+		} else {
+			cpuWins++;
+			status.setText("CPU wins. Rematch?");
+		}
+		prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
+		updateUi();
+		return true;
+	}
+
+	private void draw() {
+		gameOver = true;
+		status.setText("Draw.");
+		updateUi();
+	}
+
+	private void think() {
+		thinking = true;
+		updateUi();
+		final int me = 3 - humanColor;
+		uiHandler.postDelayed(phantomPoller, 16);
+		new Thread(() -> {
+			int m = engine.bestMove(me, THINK_MS);
+			runOnUiThread(() -> {
+				thinking = false;
+				uiHandler.removeCallbacks(phantomPoller);
+				board.clearSearchPhantoms();
+				if (gameOver) { updateUi(); return; }
+				if (m < 0 || engine.get(m) != Engine.EMPTY) { updateUi(); return; }
+				play(m, me);
+				if (finishIfWon(m, me, false)) return;
+				if (history.size() == Engine.N * Engine.N) { draw(); return; }
+				status.setText("Your move.");
+				updateUi();
+			});
+		}, "gomoku-ai").start();
+	}
+
+	private void undo() {
+		if (thinking || history.isEmpty()) return;
+		gameOver = false;
+		board.setWinLine(null);
+		do {
+			int idx = history.remove(history.size() - 1);
+			engine.take(idx);
+			board.unland(idx);
+		} while (!history.isEmpty() && sideToMove() != humanColor);
+		board.refresh();
+		if (!history.isEmpty()) board.setLastMove(history.get(history.size() - 1));
+		if (sideToMove() != humanColor) {
+			status.setText("CPU is thinking…");
+			updateUi();
+			think();
+		} else {
+			status.setText("Undone. Your move.");
+			updateUi();
+		}
+	}
+
+	private void swapSides() {
+		humanColor = 3 - humanColor;
+		prefs.edit().putInt("human", humanColor).apply();
+		newGame();
+	}
+
+	private void updateUi() {
+		int turn = sideToMove();
+		boolean yours = !gameOver && !thinking && turn == humanColor;
+		boolean cpus = !gameOver && (thinking || turn != humanColor);
+
+		youCard.setBlack(humanColor == Engine.BLACK);
+		youCard.setSubtitle(humanColor == Engine.BLACK ? "Black" : "White");
+		youCard.setActive(yours);
+		youCard.setThinking(false);
+
+		cpuCard.setBlack(humanColor != Engine.BLACK);
+		cpuCard.setSubtitle(humanColor == Engine.BLACK ? "White" : "Black");
+		cpuCard.setActive(cpus);
+		cpuCard.setThinking(thinking && !gameOver);
+
+		scoreValue.setText(youWins + " : " + cpuWins);
+		board.setGhostBlack(humanColor == Engine.BLACK);
+		board.setInputEnabled(yours);
+		if (!thinking) {
+			uiHandler.removeCallbacks(phantomPoller);
+			board.clearSearchPhantoms();
+		}
+		// only safe to inspect the board when the search thread is not running
+		if (!thinking) checkCommitted();
+	}
+}
