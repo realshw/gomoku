@@ -107,6 +107,8 @@ public final class Engine {
 	private long hash;
 	/** toggle for A/B measurement */
 	public boolean ttEnabled = true;
+	/** when false, bestMove skips the VCF/VCT proof searches (the "fast" mode) */
+	public boolean useThreatSolvers = true;
 	/** diagnostics from the last bestMove() */
 	public int lastDepth, lastNodes;
 	private int vctNodes;
@@ -396,17 +398,17 @@ public final class Engine {
 		// placement; publish them so a UI can show the enumeration faded.
 		searching = true;
 		try {
-			// 3. forced win by continuous fours
 			long end = System.nanoTime() + timeMs * 1_000_000L;
-			// threat solvers get a bounded slice so alpha-beta always keeps some time
-			deadline = Math.min(end, System.nanoTime() + 300_000_000L);
-			int v = findVcf(me, VCF_DEPTH);
-			if (v >= 0) return v;
+			if (useThreatSolvers) {
+				// threat solvers get a bounded slice so alpha-beta always keeps some time
+				deadline = Math.min(end, System.nanoTime() + 300_000_000L);
+				int v = findVcf(me, VCF_DEPTH);
+				if (v >= 0) return v;
 
-			// 3b. forced win by continuous threats (fours and open threes)
-			deadline = Math.min(end, System.nanoTime() + 250_000_000L);
-			int vct = findVct(me, VCT_DEPTH);
-			if (vct >= 0) return vct;
+				deadline = Math.min(end, System.nanoTime() + 250_000_000L);
+				int vct = findVct(me, VCT_DEPTH);
+				if (vct >= 0) return vct;
+			}
 
 			// 4. iterative-deepening alpha-beta
 			deadline = end;

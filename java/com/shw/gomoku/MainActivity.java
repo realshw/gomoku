@@ -22,7 +22,9 @@ import java.util.List;
 
 public class MainActivity extends Activity {
 
-	private static final int THINK_MS = 1500;
+	/** think budgets: deep runs the threat solvers too, fast skips them */
+	private static final int DEEP_MS = 1500;
+	private static final int FAST_MS = 450;
 
 	private final Engine engine = new Engine();
 	private final List<Integer> history = new ArrayList<>();
@@ -30,11 +32,15 @@ public class MainActivity extends Activity {
 	private BoardView board;
 	private PlayerCard youCard, cpuCard;
 	private TextView status, scoreValue;
+	private View scoreBoxView, swapBtn;
+	private LinearLayout twoPlayerBtn, deepBtn;
 	private SharedPreferences prefs;
 
 	private int humanColor = Engine.BLACK;
 	private int youWins, cpuWins;
 	private boolean thinking, gameOver;
+	private boolean twoPlayer;
+	private boolean deepReasoning = true;
 
 	private final Handler uiHandler = new Handler(Looper.getMainLooper());
 	private int[] lastPhantom = new int[0];
@@ -62,6 +68,8 @@ public class MainActivity extends Activity {
 		humanColor = prefs.getInt("human", Engine.BLACK);
 		youWins = prefs.getInt("you", 0);
 		cpuWins = prefs.getInt("cpu", 0);
+		twoPlayer = prefs.getBoolean("twoPlayer", false);
+		deepReasoning = prefs.getBoolean("deep", true);
 		buildUi();
 		newGame();
 	}
@@ -100,7 +108,7 @@ public class MainActivity extends Activity {
 				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 		applyInsets(root, column);
 
-		// header: you | score | cpu
+		// header: side | score | side
 		LinearLayout header = new LinearLayout(this);
 		header.setOrientation(LinearLayout.HORIZONTAL);
 		header.setGravity(Gravity.CENTER_VERTICAL);
@@ -111,7 +119,8 @@ public class MainActivity extends Activity {
 
 		int cardH = (int) dp(76);
 		header.addView(youCard, new LinearLayout.LayoutParams(0, cardH, 1f));
-		header.addView(scoreBox(), new LinearLayout.LayoutParams(
+		scoreBoxView = scoreBox();
+		header.addView(scoreBoxView, new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.WRAP_CONTENT, cardH));
 		header.addView(cpuCard, new LinearLayout.LayoutParams(0, cardH, 1f));
 		column.addView(header);
@@ -133,12 +142,35 @@ public class MainActivity extends Activity {
 		column.addView(middle, new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
+		// controls: a row of actions, then a row of toggles
 		LinearLayout controls = new LinearLayout(this);
-		controls.setOrientation(LinearLayout.HORIZONTAL);
-		controls.setPadding(0, (int) dp(16), 0, 0);
-		controls.addView(pill("↺", "New Game", this::newGame));
-		controls.addView(pill("↶", "Undo", this::undo));
-		controls.addView(pill("⇄", "Swap Sides", this::swapSides));
+		controls.setOrientation(LinearLayout.VERTICAL);
+		controls.setPadding(0, (int) dp(14), 0, 0);
+
+		LinearLayout actions = new LinearLayout(this);
+		actions.setOrientation(LinearLayout.HORIZONTAL);
+		actions.addView(pill("↺", "New Game", this::newGame));
+		actions.addView(pill("↶", "Undo", this::undo));
+		swapBtn = pill("⇄", "Swap Sides", this::swapSides);
+		actions.addView(swapBtn);
+		controls.addView(actions);
+
+		LinearLayout toggles = new LinearLayout(this);
+		toggles.setOrientation(LinearLayout.HORIZONTAL);
+		toggles.setPadding(0, (int) dp(8), 0, 0);
+		twoPlayerBtn = toggle("♟", "Two Players", () -> {
+			twoPlayer = !twoPlayer;
+			prefs.edit().putBoolean("twoPlayer", twoPlayer).apply();
+			newGame();
+		});
+		deepBtn = toggle("✦", "Think Hard", () -> {
+			deepReasoning = !deepReasoning;
+			prefs.edit().putBoolean("deep", deepReasoning).apply();
+			updateToggles();
+		});
+		toggles.addView(twoPlayerBtn);
+		toggles.addView(deepBtn);
+		controls.addView(toggles);
 		column.addView(controls);
 
 		setContentView(root);
@@ -186,12 +218,12 @@ public class MainActivity extends Activity {
 		return box;
 	}
 
-	private View pill(String glyph, String label, Runnable action) {
+	/** Build the shared icon+label body of an action button or a toggle. */
+	private LinearLayout buttonBody(String glyph, String label, Runnable action) {
 		LinearLayout b = new LinearLayout(this);
 		b.setOrientation(LinearLayout.VERTICAL);
 		b.setGravity(Gravity.CENTER);
 		b.setPadding((int) dp(6), (int) dp(11), (int) dp(6), (int) dp(11));
-		b.setBackground(pillBackground());
 		b.setClickable(true);
 		b.setOnClickListener(v -> action.run());
 
@@ -217,6 +249,16 @@ public class MainActivity extends Activity {
 		return b;
 	}
 
+	private View pill(String glyph, String label, Runnable action) {
+		LinearLayout b = buttonBody(glyph, label, action);
+		b.setBackground(pillBackground());
+		return b;
+	}
+
+	private LinearLayout toggle(String glyph, String label, Runnable action) {
+		return buttonBody(glyph, label, action);
+	}
+
 	private StateListDrawable pillBackground() {
 		GradientDrawable normal = new GradientDrawable(
 				GradientDrawable.Orientation.TOP_BOTTOM,
@@ -233,11 +275,46 @@ public class MainActivity extends Activity {
 		return s;
 	}
 
+	/** A toggle reads gold-filled when on, translucent when off. */
+	private void applyToggle(LinearLayout b, boolean on) {
+		GradientDrawable g = new GradientDrawable();
+		g.setCornerRadius(dp(18));
+		if (on) {
+			g.setColor(Theme.GOLD);
+			g.setStroke((int) dp(1), Theme.GOLD);
+		} else {
+			g.setColor(0x14FFFFFF);
+			g.setStroke((int) dp(1), 0x26FFFFFF);
+		}
+		b.setBackground(g);
+		((TextView) b.getChildAt(0)).setTextColor(on ? 0xFF0A0E14 : Theme.GOLD);
+		((TextView) b.getChildAt(1)).setTextColor(on ? 0xFF0A0E14 : 0xFFC9D0DA);
+	}
+
+	private void setControlEnabled(View v, boolean en) {
+		v.setEnabled(en);
+		v.setClickable(en);
+		v.setAlpha(en ? 1f : 0.35f);
+	}
+
+	private void updateToggles() {
+		applyToggle(twoPlayerBtn, twoPlayer);
+		applyToggle(deepBtn, deepReasoning);
+		// Swap Sides and Think Hard only mean something against the CPU
+		setControlEnabled(swapBtn, !twoPlayer);
+		setControlEnabled(deepBtn, !twoPlayer);
+	}
+
 	// --------------------------------------------------------------- game flow
 
 	private int centre() { return (Engine.N / 2) * Engine.N + Engine.N / 2; }
 
 	private int sideToMove() { return history.size() % 2 == 0 ? Engine.BLACK : Engine.WHITE; }
+
+	private String turnText() {
+		return sideToMove() == Engine.BLACK
+				? "Player 1 (Black) to move." : "Player 2 (White) to move.";
+	}
 
 	private void newGame() {
 		engine.reset();
@@ -246,7 +323,9 @@ public class MainActivity extends Activity {
 		thinking = false;
 		uiHandler.removeCallbacks(phantomPoller);
 		board.clearBoard();
-		if (humanColor == Engine.WHITE) {
+		if (twoPlayer) {
+			status.setText("Two players — Player 1 (Black) starts.");
+		} else if (humanColor == Engine.WHITE) {
 			engine.place(centre(), Engine.BLACK);
 			history.add(centre());
 			board.land(centre(), Engine.BLACK);
@@ -259,13 +338,20 @@ public class MainActivity extends Activity {
 	}
 
 	private void onHumanCell(int idx) {
-		if (gameOver || thinking || sideToMove() != humanColor) return;
-		play(idx, humanColor);
-		if (finishIfWon(idx, humanColor, true)) return;
+		if (gameOver || thinking) return;
+		if (!twoPlayer && sideToMove() != humanColor) return;
+		int me = sideToMove();
+		play(idx, me);
+		if (finishIfWon(idx, me)) return;
 		if (history.size() == Engine.N * Engine.N) { draw(); return; }
-		status.setText("CPU is thinking…");
-		updateUi();
-		think();
+		if (twoPlayer) {
+			status.setText(turnText());
+			updateUi();
+		} else {
+			status.setText("CPU is thinking…");
+			updateUi();
+			think();
+		}
 	}
 
 	private void play(int idx, int color) {
@@ -275,19 +361,22 @@ public class MainActivity extends Activity {
 		board.setLastMove(idx);
 	}
 
-	private boolean finishIfWon(int idx, int color, boolean human) {
+	private boolean finishIfWon(int idx, int color) {
 		int[] line = engine.fiveLine(idx, color);
 		if (line == null) return false;
 		gameOver = true;
 		board.setWinLine(line);
-		if (human) {
+		if (twoPlayer) {
+			status.setText(color == Engine.BLACK ? "Player 1 wins! 🎉" : "Player 2 wins! 🎉");
+		} else if (color == humanColor) {
 			youWins++;
 			status.setText("You win! 🎉");
+			prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		} else {
 			cpuWins++;
 			status.setText("CPU wins. Rematch?");
+			prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		}
-		prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		updateUi();
 		return true;
 	}
@@ -303,9 +392,11 @@ public class MainActivity extends Activity {
 		updateUi();
 		lastPhantom = new int[0];
 		final int me = 3 - humanColor;
+		final int budget = deepReasoning ? DEEP_MS : FAST_MS;
+		engine.useThreatSolvers = deepReasoning;
 		uiHandler.postDelayed(phantomPoller, 16);
 		new Thread(() -> {
-			int m = engine.bestMove(me, THINK_MS);
+			int m = engine.bestMove(me, budget);
 			runOnUiThread(() -> {
 				thinking = false;
 				uiHandler.removeCallbacks(phantomPoller);
@@ -314,7 +405,7 @@ public class MainActivity extends Activity {
 				if (m < 0 || engine.get(m) != Engine.EMPTY) { updateUi(); return; }
 				play(m, me);
 				Haptics.land(board);
-				if (finishIfWon(m, me, false)) return;
+				if (finishIfWon(m, me)) return;
 				if (history.size() == Engine.N * Engine.N) { draw(); return; }
 				status.setText("Your move.");
 				updateUi();
@@ -326,24 +417,31 @@ public class MainActivity extends Activity {
 		if (thinking || history.isEmpty()) return;
 		gameOver = false;
 		board.setWinLine(null);
-		do {
+		if (twoPlayer) {
 			int idx = history.remove(history.size() - 1);
 			engine.take(idx);
 			board.unland(idx);
-		} while (!history.isEmpty() && sideToMove() != humanColor);
+		} else {
+			do {
+				int idx = history.remove(history.size() - 1);
+				engine.take(idx);
+				board.unland(idx);
+			} while (!history.isEmpty() && sideToMove() != humanColor);
+		}
 		board.refresh();
 		if (!history.isEmpty()) board.setLastMove(history.get(history.size() - 1));
-		if (sideToMove() != humanColor) {
+		if (!twoPlayer && sideToMove() != humanColor) {
 			status.setText("CPU is thinking…");
 			updateUi();
 			think();
 		} else {
-			status.setText("Undone. Your move.");
+			status.setText(twoPlayer ? turnText() : "Undone. Your move.");
 			updateUi();
 		}
 	}
 
 	private void swapSides() {
+		if (twoPlayer) return;
 		humanColor = 3 - humanColor;
 		prefs.edit().putInt("human", humanColor).apply();
 		newGame();
@@ -351,22 +449,39 @@ public class MainActivity extends Activity {
 
 	private void updateUi() {
 		int turn = sideToMove();
-		boolean yours = !gameOver && !thinking && turn == humanColor;
-		boolean cpus = !gameOver && (thinking || turn != humanColor);
-
-		youCard.setBlack(humanColor == Engine.BLACK);
-		youCard.setSubtitle(humanColor == Engine.BLACK ? "Black" : "White");
-		youCard.setActive(yours);
-		youCard.setThinking(false);
-
-		cpuCard.setBlack(humanColor != Engine.BLACK);
-		cpuCard.setSubtitle(humanColor == Engine.BLACK ? "White" : "Black");
-		cpuCard.setActive(cpus);
-		cpuCard.setThinking(thinking && !gameOver);
-
+		if (twoPlayer) {
+			boolean blackTurn = turn == Engine.BLACK;
+			youCard.setName("Player 1");
+			youCard.setSubtitle("Black");
+			youCard.setBlack(true);
+			youCard.setActive(!gameOver && blackTurn);
+			youCard.setThinking(false);
+			cpuCard.setName("Player 2");
+			cpuCard.setSubtitle("White");
+			cpuCard.setBlack(false);
+			cpuCard.setActive(!gameOver && !blackTurn);
+			cpuCard.setThinking(false);
+			board.setGhostBlack(blackTurn);
+			board.setInputEnabled(!gameOver && !thinking);
+		} else {
+			boolean yours = !gameOver && !thinking && turn == humanColor;
+			boolean cpus = !gameOver && (thinking || turn != humanColor);
+			youCard.setName("You");
+			youCard.setBlack(humanColor == Engine.BLACK);
+			youCard.setSubtitle(humanColor == Engine.BLACK ? "Black" : "White");
+			youCard.setActive(yours);
+			youCard.setThinking(false);
+			cpuCard.setName("CPU");
+			cpuCard.setBlack(humanColor != Engine.BLACK);
+			cpuCard.setSubtitle(humanColor == Engine.BLACK ? "White" : "Black");
+			cpuCard.setActive(cpus);
+			cpuCard.setThinking(thinking && !gameOver);
+			board.setGhostBlack(humanColor == Engine.BLACK);
+			board.setInputEnabled(yours);
+		}
+		scoreBoxView.setVisibility(twoPlayer ? View.GONE : View.VISIBLE);
 		scoreValue.setText(youWins + " : " + cpuWins);
-		board.setGhostBlack(humanColor == Engine.BLACK);
-		board.setInputEnabled(yours);
+		updateToggles();
 		if (!thinking) {
 			uiHandler.removeCallbacks(phantomPoller);
 			board.clearSearchPhantoms();
