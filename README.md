@@ -4,10 +4,10 @@ A 15×15 freestyle Gomoku (five-in-a-row) engine and Android app. No Gradle, no
 native code — the engine is plain Java so it can be unit-tested on the host, and
 the app is built on-device with `aapt2`/`javac`/`d8`/`apksigner`.
 
-- `java/com/shengwan/gomoku/Engine.java` — the engine (pure Java, no Android)
-- `java/com/shengwan/gomoku/BoardView.java` — custom board renderer
-- `java/com/shengwan/gomoku/MainActivity.java` — UI and game flow
-- `test/com/shengwan/gomoku/HostTest.java` — host test suite
+- `java/com/shw/gomoku/Engine.java` — the engine (pure Java, no Android)
+- `java/com/shw/gomoku/BoardView.java` — custom board renderer
+- `java/com/shw/gomoku/MainActivity.java` — UI and game flow
+- `test/com/shw/gomoku/HostTest.java` — host test suite
 
 ## 1. Position and incremental evaluation
 
@@ -127,8 +127,8 @@ asserts `engine.stoneCount() == history.size()` after every idle transition.
 
 ```
 mkdir -p .htest
-javac -d .htest java/com/shengwan/gomoku/Engine.java test/com/shengwan/gomoku/HostTest.java
-java -cp .htest com.shengwan.gomoku.HostTest
+javac -d .htest java/com/shw/gomoku/Engine.java test/com/shw/gomoku/HostTest.java
+java -cp .htest com.shw.gomoku.HostTest
 ```
 
 The suite covers tactics (win/block/open three), a greedy match, forced-timeout

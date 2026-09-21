@@ -1,4 +1,4 @@
-package com.shengwan.gomoku;
+package com.shw.gomoku;
 
 /** Host-side validation of Engine (no Android). */
 public class HostTest {

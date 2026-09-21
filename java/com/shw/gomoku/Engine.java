@@ -1,4 +1,4 @@
-package com.shengwan.gomoku;
+package com.shw.gomoku;
 
 import java.util.ArrayList;
 

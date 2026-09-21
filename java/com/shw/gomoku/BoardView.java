@@ -1,4 +1,4 @@
-package com.shengwan.gomoku;
+package com.shw.gomoku;
 
 import android.animation.ValueAnimator;
 import android.content.Context;
