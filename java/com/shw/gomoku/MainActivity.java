@@ -16,6 +16,7 @@ import android.view.WindowInsets;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,8 +35,6 @@ public class MainActivity extends Activity {
 	private final List<Integer> history = new ArrayList<>();
 
 	private BoardView board;
-	private PlayerCard youCard, cpuCard;
-	private TextView status, scoreValue;
 	private TextView cpuBtn;
 	private SharedPreferences prefs;
 
@@ -98,6 +97,10 @@ public class MainActivity extends Activity {
 
 	private float dp(float v) { return v * getResources().getDisplayMetrics().density; }
 
+	private void toast(String msg) {
+		Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+	}
+
 	// ------------------------------------------------------------------ layout
 
 	private void buildUi() {
@@ -107,33 +110,20 @@ public class MainActivity extends Activity {
 
 		LinearLayout column = new LinearLayout(this);
 		column.setOrientation(LinearLayout.VERTICAL);
+		column.setGravity(Gravity.CENTER_VERTICAL);
 		root.addView(column, new FrameLayout.LayoutParams(
 				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 		applyInsets(root, column);
 
-		// header: you | score | cpu
-		LinearLayout header = new LinearLayout(this);
-		header.setOrientation(LinearLayout.HORIZONTAL);
-		header.setGravity(Gravity.CENTER_VERTICAL);
-
-		youCard = new PlayerCard(this);
-		youCard.setName("You");
-		cpuCard = new PlayerCard(this);
-		cpuCard.setName("CPU");
-
-		int cardH = (int) dp(76);
-		header.addView(youCard, new LinearLayout.LayoutParams(0, cardH, 1f));
-		header.addView(scoreBox(), new LinearLayout.LayoutParams(
-				LinearLayout.LayoutParams.WRAP_CONTENT, cardH));
-		header.addView(cpuCard, new LinearLayout.LayoutParams(0, cardH, 1f));
-		column.addView(header);
-
-		status = new TextView(this);
-		status.setTextSize(14);
-		status.setTextColor(Theme.MUTED);
-		status.setGravity(Gravity.CENTER);
-		status.setPadding(0, (int) dp(14), 0, (int) dp(6));
-		column.addView(status);
+		// top controls: New, Swap (snug above the board)
+		LinearLayout top = new LinearLayout(this);
+		top.setOrientation(LinearLayout.HORIZONTAL);
+		top.addView(pill("New", this::newGame));
+		top.addView(pill("Swap", this::swapSides));
+		LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+				LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+		tlp.bottomMargin = (int) dp(10);
+		column.addView(top, tlp);
 
 		FrameLayout middle = new FrameLayout(this);
 		board = new BoardView(this);
@@ -142,20 +132,19 @@ public class MainActivity extends Activity {
 				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
 		blp.gravity = Gravity.CENTER;
 		middle.addView(board, blp);
-		column.addView(middle, new LinearLayout.LayoutParams(
-				LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+		column.addView(middle);
 
-		// controls: one row of single-word buttons
-		LinearLayout controls = new LinearLayout(this);
-		controls.setOrientation(LinearLayout.HORIZONTAL);
-		controls.setPadding(0, (int) dp(14), 0, 0);
-		controls.addView(pill("New", this::newGame));
-		controls.addView(pill("Undo", this::undo));
-		controls.addView(pill("Swap", this::swapSides));
+		// bottom controls: Undo, CPU (snug below the board)
+		LinearLayout bottom = new LinearLayout(this);
+		bottom.setOrientation(LinearLayout.HORIZONTAL);
+		bottom.addView(pill("Undo", this::undo));
 		cpuBtn = buttonBase("Hard");
 		cpuBtn.setOnClickListener(v -> cycleCpu());
-		controls.addView(cpuBtn);
-		column.addView(controls);
+		bottom.addView(cpuBtn);
+		LinearLayout.LayoutParams blp2 = new LinearLayout.LayoutParams(
+				LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+		blp2.topMargin = (int) dp(10);
+		column.addView(bottom, blp2);
 
 		setContentView(root);
 	}
@@ -177,29 +166,6 @@ public class MainActivity extends Activity {
 			return insets;
 		});
 		root.requestApplyInsets();
-	}
-
-	private View scoreBox() {
-		LinearLayout box = new LinearLayout(this);
-		box.setOrientation(LinearLayout.VERTICAL);
-		box.setGravity(Gravity.CENTER);
-		box.setPadding((int) dp(10), 0, (int) dp(10), 0);
-
-		scoreValue = new TextView(this);
-		scoreValue.setTextSize(22);
-		scoreValue.setTextColor(Theme.GOLD);
-		scoreValue.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
-		scoreValue.setGravity(Gravity.CENTER);
-		box.addView(scoreValue);
-
-		TextView cap = new TextView(this);
-		cap.setText("SCORE");
-		cap.setTextSize(9);
-		cap.setLetterSpacing(0.22f);
-		cap.setTextColor(Theme.MUTED);
-		cap.setGravity(Gravity.CENTER);
-		box.addView(cap);
-		return box;
 	}
 
 	/** A single-word button: shared sizing, no icon. */
@@ -279,10 +245,6 @@ public class MainActivity extends Activity {
 	private void cycleCpu() {
 		cpuMode = (cpuMode + 1) % 3;
 		prefs.edit().putInt("cpuMode", cpuMode).apply();
-		if (!gameOver) {
-			if (cpuOn() && sideToMove() != humanColor) status.setText("CPU is thinking…");
-			else status.setText("Your move.");
-		}
 		updateUi();
 		if (cpuOn() && !gameOver && !thinking && sideToMove() != humanColor) think();
 	}
@@ -299,9 +261,6 @@ public class MainActivity extends Activity {
 			history.add(centre());
 			board.land(centre(), Engine.BLACK);
 			board.setLastMove(centre());
-			status.setText("CPU opened in the centre.");
-		} else {
-			status.setText("Your move.");
 		}
 		updateUi();
 	}
@@ -314,11 +273,8 @@ public class MainActivity extends Activity {
 		if (finishIfWon(idx, me)) return;
 		if (history.size() == Engine.N * Engine.N) { draw(); return; }
 		if (cpuOn() && sideToMove() != humanColor) {
-			status.setText("CPU is thinking…");
-			updateUi();
 			think();
 		} else {
-			status.setText("Your move.");
 			updateUi();
 		}
 	}
@@ -337,10 +293,10 @@ public class MainActivity extends Activity {
 		board.setWinLine(line);
 		if (color == humanColor) {
 			youWins++;
-			status.setText("You win! 🎉");
+			toast("You win!");
 		} else {
 			cpuWins++;
-			status.setText("CPU wins. Rematch?");
+			toast("CPU wins");
 		}
 		prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		updateUi();
@@ -349,7 +305,7 @@ public class MainActivity extends Activity {
 
 	private void draw() {
 		gameOver = true;
-		status.setText("Draw.");
+		toast("Draw");
 		updateUi();
 	}
 
@@ -374,7 +330,6 @@ public class MainActivity extends Activity {
 				Haptics.land(board);
 				if (finishIfWon(m, me)) return;
 				if (history.size() == Engine.N * Engine.N) { draw(); return; }
-				status.setText("Your move.");
 				updateUi();
 			});
 		}, "gomoku-ai").start();
@@ -398,11 +353,8 @@ public class MainActivity extends Activity {
 		board.refresh();
 		if (!history.isEmpty()) board.setLastMove(history.get(history.size() - 1));
 		if (cpuOn() && sideToMove() != humanColor) {
-			status.setText("CPU is thinking…");
-			updateUi();
 			think();
 		} else {
-			status.setText("Your move.");
 			updateUi();
 		}
 	}
@@ -415,21 +367,6 @@ public class MainActivity extends Activity {
 
 	private void updateUi() {
 		int turn = sideToMove();
-		// the CPU card lights up on its turn whether the CPU plays it or a human does
-		boolean yourTurn = !gameOver && !thinking && turn == humanColor;
-		boolean cpuTurn = !gameOver && (thinking || turn != humanColor);
-
-		youCard.setBlack(humanColor == Engine.BLACK);
-		youCard.setSubtitle(humanColor == Engine.BLACK ? "Black" : "White");
-		youCard.setActive(yourTurn);
-		youCard.setThinking(false);
-
-		cpuCard.setBlack(humanColor != Engine.BLACK);
-		cpuCard.setSubtitle(humanColor == Engine.BLACK ? "White" : "Black");
-		cpuCard.setActive(cpuTurn);
-		cpuCard.setThinking(thinking && !gameOver);
-
-		scoreValue.setText(youWins + " : " + cpuWins);
 		board.setGhostBlack(turn == Engine.BLACK);
 		board.setInputEnabled(!gameOver && !thinking && (!cpuOn() || turn == humanColor));
 		applyCpuStyle();

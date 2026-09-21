@@ -35,7 +35,6 @@ public class BoardView extends View {
 	private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
 	private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
 	private final Paint grain = new Paint(Paint.ANTI_ALIAS_FLAG);
-	private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 	private final Paint marker = new Paint(Paint.ANTI_ALIAS_FLAG);
 	private final Paint winPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -70,8 +69,6 @@ public class BoardView extends View {
 		grain.setColor(0x1A5A3C1A);
 		marker.setStyle(Paint.Style.STROKE);
 		winPaint.setStyle(Paint.Style.STROKE);
-		textPaint.setTextAlign(Paint.Align.CENTER);
-		textPaint.setColor(0x885A3C1A);
 	}
 
 	public void setListener(Listener l) { listener = l; }
@@ -182,7 +179,6 @@ public class BoardView extends View {
 		frameRect.set(gridRect.left - fp, gridRect.top - fp,
 				gridRect.right + fp, gridRect.bottom + fp);
 		stones.radius(radius);
-		textPaint.setTextSize(cell * 0.40f);
 		dash = new DashPathEffect(new float[]{cell * 0.24f, cell * 0.18f}, 0);
 		woodShader = new LinearGradient(frameRect.left, frameRect.top,
 				frameRect.right * 0.4f + gridRect.left * 0.6f, frameRect.bottom,
@@ -265,13 +261,6 @@ public class BoardView extends View {
 		int[] sx = {3, 11, 3, 11, 7}, sy = {3, 3, 11, 11, 7};
 		for (int i = 0; i < 5; i++)
 			c.drawCircle(ox + sx[i] * cell, oy + sy[i] * cell, cell * 0.10f, fill);
-
-		for (int i = 0; i < Engine.N; i++) {
-			c.drawText(String.valueOf((char) ('A' + i)), ox + i * cell,
-					gridRect.bottom + cell * 0.62f, textPaint);
-			c.drawText(String.valueOf(i + 1), gridRect.left - cell * 0.54f,
-					oy + i * cell + cell * 0.14f, textPaint);
-		}
 	}
 
 	private void drawStones(Canvas c) {
