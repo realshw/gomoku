@@ -22,6 +22,8 @@ public final class Engine {
 	private static final int WIN = 100_000_000;
 	private static final int INF = Integer.MAX_VALUE / 4;
 	private static final int VCF_DEPTH = 14;
+	private static final int VCT_DEPTH = 8;
+	private static final int VCT_NODE_CAP = 40000;
 	private static final int[] NO_PHANTOMS = new int[0];
 
 	// --- transposition table (shared: one search runs at a time) ---
@@ -107,6 +109,7 @@ public final class Engine {
 	public boolean ttEnabled = true;
 	/** diagnostics from the last bestMove() */
 	public int lastDepth, lastNodes;
+	private int vctNodes;
 
 	private final int[] tmpIdx = new int[N * N];
 	private final int[] tmpScore = new int[N * N];
@@ -394,11 +397,19 @@ public final class Engine {
 		searching = true;
 		try {
 			// 3. forced win by continuous fours
-			deadline = System.nanoTime() + timeMs * 1_000_000L;
+			long end = System.nanoTime() + timeMs * 1_000_000L;
+			// threat solvers get a bounded slice so alpha-beta always keeps some time
+			deadline = Math.min(end, System.nanoTime() + 300_000_000L);
 			int v = findVcf(me, VCF_DEPTH);
 			if (v >= 0) return v;
 
+			// 3b. forced win by continuous threats (fours and open threes)
+			deadline = Math.min(end, System.nanoTime() + 250_000_000L);
+			int vct = findVct(me, VCT_DEPTH);
+			if (vct >= 0) return vct;
+
 			// 4. iterative-deepening alpha-beta
+			deadline = end;
 			nodes = 0;
 			lastDepth = 0;
 			int best = -1;
@@ -428,6 +439,9 @@ public final class Engine {
 
 	/** Snapshot of the search path currently being explored, oldest first. */
 	public int[] phantomSnapshot() { return phantom; }
+
+	/** Start a fresh time budget for direct calls to findVcf/findVct. */
+	public void setBudget(int ms) { deadline = System.nanoTime() + ms * 1_000_000L; }
 
 	private int firstEmpty() {
 		for (int i = 0; i < board.length; i++) if (board[i] == EMPTY) return i;
@@ -602,7 +616,7 @@ public final class Engine {
 	 * A "four" forces a single reply; an open four (two winning points) is already
 	 * unstoppable.
 	 */
-	private int findVcf(int player, int depth) {
+	public int findVcf(int player, int depth) {
 		int[] cells = candidates();
 		for (int i = 0; i < cells.length; i++) {
 			if (System.nanoTime() > deadline) return -1;
@@ -686,5 +700,252 @@ public final class Engine {
 		int[] res = new int[n];
 		System.arraycopy(out, 0, res, 0, n);
 		return res;
+	}
+
+	// ----------------------------------------------------------------- VCT
+
+	/**
+	 * Victory by Continuous Threats: VCF plus open threes. Returns a forcing
+	 * first move, or -1.
+	 *
+	 * Soundness rests on two conservative rules. (1) A move that makes a four
+	 * forces a single reply; the attacker exploits a double threat. (2) An
+	 * open-three move is only treated as forcing when the defender cannot make a
+	 * four of its own — otherwise the defender's four wins the tempo race — and
+	 * then the defender's replies are enumerated over *every* empty cell on the
+	 * threat's lines (a superset of the blocking moves). Both rules can miss
+	 * wins, but neither can invent one.
+	 */
+	public int findVct(int player, int depth) {
+		vctNodes = 0;
+		int[] cells = candidates();
+		int n = cells.length;
+		// immediate wins first: a five, or an open-four move
+		for (int i = 0; i < n; i++) {
+			int idx = cells[i];
+			if (board[idx] != EMPTY) continue;
+			addStone(idx, player);
+			boolean imm;
+			try {
+				imm = isFive(idx, player) || winningPoints(idx, player).length >= 2;
+			} finally {
+				removeStone(idx);
+			}
+			if (imm) return idx;
+		}
+		// order the rest by fork potential (open-four moves they create)
+		int[] sc = new int[n];
+		for (int i = 0; i < n; i++) {
+			int idx = cells[i];
+			if (board[idx] != EMPTY) { sc[i] = -1; continue; }
+			addStone(idx, player);
+			try {
+				sc[i] = openFourMoveCount(idx, player);
+			} finally {
+				removeStone(idx);
+			}
+		}
+		for (int i = 0; i < n; i++)
+			for (int j = i + 1; j < n; j++)
+				if (sc[j] > sc[i]) {
+					int t = sc[i]; sc[i] = sc[j]; sc[j] = t;
+					t = cells[i]; cells[i] = cells[j]; cells[j] = t;
+				}
+		for (int i = 0; i < n; i++) {
+			if (System.nanoTime() > deadline) {
+				return -1;
+			}
+			int idx = cells[i];
+			if (board[idx] != EMPTY) continue;
+			addStone(idx, player);
+			boolean win;
+			try {
+				win = attackerMoveWins(idx, player, depth);
+			} finally {
+				removeStone(idx);
+			}
+			if (win) return idx;
+		}
+		return -1;
+	}
+
+	/** How many open-four moves (each making two winning points) `idx` enables. */
+	private int openFourMoveCount(int idx, int player) {
+		int x = idx % N, y = idx / N;
+		int cnt = 0;
+		for (int d = 0; d < 4; d++) {
+			for (int s = -4; s <= 4; s++) {
+				if (s == 0) continue;
+				int nx = x + DIRX[d] * s, ny = y + DIRY[d] * s;
+				if (nx < 0 || nx >= N || ny < 0 || ny >= N) continue;
+				int q = ny * N + nx;
+				if (board[q] != EMPTY) continue;
+				addStone(q, player);
+				int w;
+				try {
+					w = winningPoints(q, player).length;
+				} finally {
+					removeStone(q);
+				}
+				if (w >= 2) cnt++;
+			}
+		}
+		return cnt;
+	}
+
+	/** `player` to move: can it force a win by continuous threats? */
+	private boolean vctWin(int player, int depth) {
+		if (depth <= 0 || vctNodes > VCT_NODE_CAP) return false;
+		if (findFive(player) >= 0) return true;
+		int[] cells = candidates();
+		// 1. immediate: a five, or a move that makes an open four (two threats)
+		for (int i = 0; i < cells.length; i++) {
+			if (System.nanoTime() > deadline) return false;
+			int idx = cells[i];
+			if (board[idx] != EMPTY) continue;
+			addStone(idx, player);
+			boolean imm;
+			try {
+				imm = isFive(idx, player) || winningPoints(idx, player).length >= 2;
+			} finally {
+				removeStone(idx);
+			}
+			if (imm) return true;
+		}
+		// 2. forcing moves: fours (single forced reply) then open threes
+		for (int i = 0; i < cells.length; i++) {
+			if (System.nanoTime() > deadline) return false;
+			int idx = cells[i];
+			if (board[idx] != EMPTY) continue;
+			addStone(idx, player);
+			boolean win;
+			try {
+				win = attackerMoveWins(idx, player, depth);
+			} finally {
+				removeStone(idx);
+			}
+			if (win) return true;
+		}
+		return false;
+	}
+
+	/** `player` just played `idx` (still placed): does that move win against every defence? */
+	private boolean attackerMoveWins(int idx, int player, int depth) {
+		vctNodes++;
+		int opp = 3 - player;
+		if (vctNodes > VCT_NODE_CAP) return false;
+		if (isFive(idx, player)) return true;
+		if (findFive(opp) >= 0) return false;
+		int[] wp = winningPoints(idx, player);
+		if (wp.length >= 2) return true;
+		if (wp.length == 1) {
+			addStone(wp[0], opp);
+			boolean win;
+			try {
+				win = vctWin(player, depth - 1);
+			} finally {
+				removeStone(wp[0]);
+			}
+			return win;
+		}
+		if (!hasOpenFourMove(idx, player)) return false;
+		if (canMakeFour(opp)) return false;
+		int[] defs = defenseCells(idx, player);
+		for (int i = 0; i < defs.length; i++) {
+			int d = defs[i];
+			if (board[d] != EMPTY) continue;
+			addStone(d, opp);
+			boolean ok;
+			try {
+				ok = !isFive(d, opp) && winningPoints(d, opp).length == 0
+						&& vctWin(player, depth - 1);
+			} finally {
+				removeStone(d);
+			}
+			if (!ok) return false;
+		}
+		return true;
+	}
+
+	/** Does `player` have a move near `idx` that makes an open four or five? */
+	private boolean hasOpenFourMove(int idx, int player) {
+		int x = idx % N, y = idx / N;
+		for (int d = 0; d < 4; d++) {
+			for (int s = -4; s <= 4; s++) {
+				if (s == 0) continue;
+				int nx = x + DIRX[d] * s, ny = y + DIRY[d] * s;
+				if (nx < 0 || nx >= N || ny < 0 || ny >= N) continue;
+				int q = ny * N + nx;
+				if (board[q] != EMPTY) continue;
+				addStone(q, player);
+				boolean strong;
+				try {
+					strong = isFive(q, player) || winningPoints(q, player).length >= 2;
+				} finally {
+					removeStone(q);
+				}
+				if (strong) return true;
+			}
+		}
+		return false;
+	}
+
+	/** Can `player` play a move that creates a four (threatens five next)? */
+	private boolean canMakeFour(int player) {
+		int[] cells = candidates();
+		for (int i = 0; i < cells.length; i++) {
+			int idx = cells[i];
+			if (board[idx] != EMPTY) continue;
+			addStone(idx, player);
+			boolean four;
+			try {
+				four = isFive(idx, player) || winningPoints(idx, player).length >= 1;
+			} finally {
+				removeStone(idx);
+			}
+			if (four) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Defender replies that can possibly stop `player`'s open three: for every
+	 * open-four move q the attacker has (a move making two winning points), the
+	 * reply must occupy q itself or one of the winning points q would create.
+	 * Anything further away cannot refute, so this stays a superset of the
+	 * refuting moves while being far smaller than the whole line.
+	 */
+	private int[] defenseCells(int idx, int player) {
+		int x = idx % N, y = idx / N;
+		int[] out = new int[32];
+		int n = 0;
+		for (int d = 0; d < 4; d++) {
+			for (int s = -4; s <= 4; s++) {
+				if (s == 0) continue;
+				int nx = x + DIRX[d] * s, ny = y + DIRY[d] * s;
+				if (nx < 0 || nx >= N || ny < 0 || ny >= N) continue;
+				int q = ny * N + nx;
+				if (board[q] != EMPTY) continue;
+				addStone(q, player);
+				int[] wp;
+				try {
+					wp = winningPoints(q, player);
+				} finally {
+					removeStone(q);
+				}
+				if (wp.length < 2) continue; // q is not an open-four move
+				n = addUnique(out, n, q);
+				for (int w = 0; w < wp.length; w++) n = addUnique(out, n, wp[w]);
+			}
+		}
+		int[] res = new int[n];
+		System.arraycopy(out, 0, res, 0, n);
+		return res;
+	}
+
+	private static int addUnique(int[] a, int n, int v) {
+		for (int i = 0; i < n; i++) if (a[i] == v) return n;
+		if (n < a.length) a[n++] = v;
+		return n;
 	}
 }

@@ -236,6 +236,57 @@ public class HostTest {
 			check("search picks an optimal root move (" + vChosen + " == " + trueBest + ")",
 					vChosen == trueBest);
 		}
+		// 15. VCT must find a double-three fork that VCF cannot
+		{
+			Engine e = new Engine();
+			e.place(idx(6, 7), Engine.BLACK);
+			e.place(idx(8, 7), Engine.BLACK);
+			e.place(idx(7, 6), Engine.BLACK);
+			e.place(idx(7, 8), Engine.BLACK);
+			e.place(idx(1, 1), Engine.WHITE);
+			e.place(idx(2, 2), Engine.WHITE);
+			e.place(idx(1, 2), Engine.WHITE);
+			e.setBudget(3000);
+			int vcf = e.findVcf(Engine.BLACK, 14);
+			e.setBudget(3000);
+			int vct = e.findVct(Engine.BLACK, 8);
+			check("VCT finds the double-three fork, VCF does not", vcf < 0 && vct == idx(7, 7));
+		}
+		// 16. VCT must not invent a win in a quiet position
+		{
+			Engine e = new Engine();
+			e.place(idx(7, 7), Engine.BLACK);
+			e.place(idx(8, 8), Engine.WHITE);
+			e.setBudget(2000);
+			check("VCT claims no win in a quiet position", e.findVct(Engine.BLACK, 8) < 0);
+		}
+		// 17. the fork must actually win against the full alpha-beta defender
+		{
+			Engine e = new Engine();
+			e.place(idx(6, 7), Engine.BLACK);
+			e.place(idx(8, 7), Engine.BLACK);
+			e.place(idx(7, 6), Engine.BLACK);
+			e.place(idx(7, 8), Engine.BLACK);
+			e.place(idx(1, 1), Engine.WHITE);
+			e.place(idx(2, 2), Engine.WHITE);
+			e.place(idx(1, 2), Engine.WHITE);
+			int winner = 0;
+			for (int ply = 0; ply < 12; ply++) {
+				int me = (ply % 2 == 0) ? Engine.BLACK : Engine.WHITE;
+				int m;
+				if (me == Engine.BLACK) {
+					e.setBudget(2000);
+					m = e.findVct(Engine.BLACK, 8);
+					if (m < 0) m = e.bestMove(Engine.BLACK, 300);
+				} else {
+					m = e.bestMove(Engine.WHITE, 300);
+				}
+				if (m < 0 || e.get(m) != Engine.EMPTY) break;
+				e.place(m, me);
+				if (e.isFive(m, me)) { winner = me; break; }
+			}
+			check("VCT fork wins against the alpha-beta defender", winner == Engine.BLACK);
+		}
 		System.out.println(failures == 0 ? "ALL PASS" : failures + " FAILURES");
 		if (failures != 0) System.exit(1);
 	}
