@@ -257,8 +257,10 @@ public class MainActivity extends Activity {
 	}
 
 	private void requestSwapSides() {
+		String next = humanColor == Engine.BLACK ? "White" : "Black";
 		if (history.isEmpty()) swapSides();
-		else confirm("Swap sides?", "Start a new game with the other colour.", this::swapSides);
+		else confirm("Swap to " + next + "?",
+				"You will play " + next + " in a new game.", this::swapSides);
 	}
 
 	private void confirm(String title, String message, Runnable action) {
