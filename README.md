@@ -141,3 +141,7 @@ fork.
 No VCT threat-space/proof-number search (VCT is depth- and node-capped, so it is
 incomplete), no opening book, and freestyle rules (no forbidden-move restriction
 for Black). The engine is strong tactically but is not a solved-perfect player.
+
+## License
+
+0BSD — see [LICENSE](LICENSE).
