@@ -369,7 +369,7 @@ public class BoardView extends View {
 				phantomIdx = -1;
 				invalidate();
 				if (idx >= 0 && landed[idx] == Engine.EMPTY && listener != null) {
-					performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+					Haptics.land(this);
 					listener.onCell(idx);
 				}
 				return true;

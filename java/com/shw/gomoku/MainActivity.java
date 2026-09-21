@@ -37,12 +37,21 @@ public class MainActivity extends Activity {
 	private boolean thinking, gameOver;
 
 	private final Handler uiHandler = new Handler(Looper.getMainLooper());
-	/** While the CPU thinks, sample its search path and show it faded on the board. */
+	private int[] lastPhantom = new int[0];
+	private long lastTick;
+	/** While the CPU thinks: sample its search path, show it faded, and tick softly. */
 	private final Runnable phantomPoller = new Runnable() {
 		@Override public void run() {
 			if (!thinking) return;
-			board.setSearchPhantoms(engine.phantomSnapshot(), 3 - humanColor);
+			int[] snap = engine.phantomSnapshot();
+			board.setSearchPhantoms(snap, 3 - humanColor);
 			board.invalidate();
+			long now = System.nanoTime();
+			if (snap.length > 0 && snap != lastPhantom && now - lastTick > 70_000_000L) {
+				lastPhantom = snap;
+				lastTick = now;
+				Haptics.tick(board);
+			}
 			uiHandler.postDelayed(this, 40);
 		}
 	};
@@ -292,6 +301,7 @@ public class MainActivity extends Activity {
 	private void think() {
 		thinking = true;
 		updateUi();
+		lastPhantom = new int[0];
 		final int me = 3 - humanColor;
 		uiHandler.postDelayed(phantomPoller, 16);
 		new Thread(() -> {
@@ -303,6 +313,7 @@ public class MainActivity extends Activity {
 				if (gameOver) { updateUi(); return; }
 				if (m < 0 || engine.get(m) != Engine.EMPTY) { updateUi(); return; }
 				play(m, me);
+				Haptics.land(board);
 				if (finishIfWon(m, me, false)) return;
 				if (history.size() == Engine.N * Engine.N) { draw(); return; }
 				status.setText("Your move.");
