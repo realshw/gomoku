@@ -1,6 +1,7 @@
 package com.shw.gomoku;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Insets;
 import android.graphics.Typeface;
@@ -36,7 +37,6 @@ public class MainActivity extends Activity {
 
 	private BoardView board;
 	private TextView cpuBtn;
-	private TextView swapBtn;
 	private SharedPreferences prefs;
 
 	private int humanColor = Engine.BLACK;
@@ -119,9 +119,8 @@ public class MainActivity extends Activity {
 		// top controls: New, Swap (snug above the board)
 		LinearLayout top = new LinearLayout(this);
 		top.setOrientation(LinearLayout.HORIZONTAL);
-		top.addView(pill("New", this::newGame));
-		swapBtn = pill("Swap", this::swapSides);
-		top.addView(swapBtn);
+		top.addView(pill("New", this::requestNewGame));
+		top.addView(pill("Swap", this::requestSwapSides));
 		LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
 		tlp.bottomMargin = (int) dp(10);
@@ -237,29 +236,6 @@ public class MainActivity extends Activity {
 		cpuBtn.setBackground(g);
 	}
 
-	/**
-	 * Swap button carries the human's stone colour, so it doubles as the "who
-	 * opens" cue: black fills you in as first player, white as second.
-	 */
-	private void applySwapStyle() {
-		boolean black = humanColor == Engine.BLACK;
-		GradientDrawable normal = new GradientDrawable();
-		normal.setCornerRadius(dp(18));
-		normal.setColor(black ? 0xFF1A1E25 : 0xFFEDEFF3);
-		normal.setStroke((int) dp(1), black ? 0x66FFFFFF : 0x33000000);
-
-		GradientDrawable pressed = new GradientDrawable();
-		pressed.setCornerRadius(dp(18));
-		pressed.setColor(black ? 0xFF2A3038 : 0xFFFFFFFF);
-		pressed.setStroke((int) dp(1), 0x88FFD166);
-
-		StateListDrawable s = new StateListDrawable();
-		s.addState(new int[]{android.R.attr.state_pressed}, pressed);
-		s.addState(new int[]{}, normal);
-		swapBtn.setBackground(s);
-		swapBtn.setTextColor(black ? 0xFFEDEFF3 : 0xFF14181F);
-	}
-
 	// --------------------------------------------------------------- game flow
 
 	private int centre() { return (Engine.N / 2) * Engine.N + Engine.N / 2; }
@@ -272,6 +248,26 @@ public class MainActivity extends Activity {
 		prefs.edit().putInt("cpuMode", cpuMode).apply();
 		updateUi();
 		if (cpuOn() && !gameOver && !thinking && sideToMove() != humanColor) think();
+	}
+
+	/** Confirm before wiping the board; skip when it is already empty. */
+	private void requestNewGame() {
+		if (history.isEmpty()) newGame();
+		else confirm("New game?", "Discard the current game and start over.", this::newGame);
+	}
+
+	private void requestSwapSides() {
+		if (history.isEmpty()) swapSides();
+		else confirm("Swap sides?", "Start a new game with the other colour.", this::swapSides);
+	}
+
+	private void confirm(String title, String message, Runnable action) {
+		new AlertDialog.Builder(this)
+				.setTitle(title)
+				.setMessage(message)
+				.setNegativeButton("Cancel", null)
+				.setPositiveButton("Confirm", (d, w) -> action.run())
+				.show();
 	}
 
 	private void newGame() {
@@ -395,7 +391,6 @@ public class MainActivity extends Activity {
 		board.setGhostBlack(turn == Engine.BLACK);
 		board.setInputEnabled(!gameOver && !thinking && (!cpuOn() || turn == humanColor));
 		applyCpuStyle();
-		applySwapStyle();
 
 		if (!thinking) {
 			uiHandler.removeCallbacks(phantomPoller);
