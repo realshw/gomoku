@@ -22,7 +22,11 @@ import java.util.List;
 
 public class MainActivity extends Activity {
 
-	// the CPU is one object with three states
+	/**
+	 * The CPU is one object with three effort states. OFF means the CPU's side is
+	 * played by hand (a human impersonating the CPU) — everything else in the UI
+	 * still reads You vs CPU; only the button changes.
+	 */
 	private static final int CPU_OFF = 0, CPU_FAST = 1, CPU_HARD = 2;
 	private static final int FAST_MS = 450, HARD_MS = 1500;
 
@@ -32,7 +36,6 @@ public class MainActivity extends Activity {
 	private BoardView board;
 	private PlayerCard youCard, cpuCard;
 	private TextView status, scoreValue;
-	private View scoreBoxView, swapBtn;
 	private LinearLayout cpuBtn;
 	private SharedPreferences prefs;
 
@@ -108,18 +111,19 @@ public class MainActivity extends Activity {
 				FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 		applyInsets(root, column);
 
-		// header: side | score | side
+		// header: you | score | cpu
 		LinearLayout header = new LinearLayout(this);
 		header.setOrientation(LinearLayout.HORIZONTAL);
 		header.setGravity(Gravity.CENTER_VERTICAL);
 
 		youCard = new PlayerCard(this);
+		youCard.setName("You");
 		cpuCard = new PlayerCard(this);
+		cpuCard.setName("CPU");
 
 		int cardH = (int) dp(76);
 		header.addView(youCard, new LinearLayout.LayoutParams(0, cardH, 1f));
-		scoreBoxView = scoreBox();
-		header.addView(scoreBoxView, new LinearLayout.LayoutParams(
+		header.addView(scoreBox(), new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.WRAP_CONTENT, cardH));
 		header.addView(cpuCard, new LinearLayout.LayoutParams(0, cardH, 1f));
 		column.addView(header);
@@ -141,25 +145,15 @@ public class MainActivity extends Activity {
 		column.addView(middle, new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-		// controls: actions row, then the single tri-state CPU button
+		// controls: one row — New Game, Undo, Swap Sides, CPU effort
 		LinearLayout controls = new LinearLayout(this);
-		controls.setOrientation(LinearLayout.VERTICAL);
+		controls.setOrientation(LinearLayout.HORIZONTAL);
 		controls.setPadding(0, (int) dp(14), 0, 0);
-
-		LinearLayout actions = new LinearLayout(this);
-		actions.setOrientation(LinearLayout.HORIZONTAL);
-		actions.addView(pill("↺", "New Game", this::newGame));
-		actions.addView(pill("↶", "Undo", this::undo));
-		swapBtn = pill("⇄", "Swap Sides", this::swapSides);
-		actions.addView(swapBtn);
-		controls.addView(actions);
-
-		LinearLayout cpuRow = new LinearLayout(this);
-		cpuRow.setOrientation(LinearLayout.HORIZONTAL);
-		cpuRow.setPadding(0, (int) dp(8), 0, 0);
-		cpuBtn = buttonBody("⊘", "CPU: Off", this::cycleCpu);
-		cpuRow.addView(cpuBtn);
-		controls.addView(cpuRow);
+		controls.addView(pill("↺", "New Game", this::newGame));
+		controls.addView(pill("↶", "Undo", this::undo));
+		controls.addView(pill("⇄", "Swap Sides", this::swapSides));
+		cpuBtn = buttonBody("✦", "CPU: Hard", this::cycleCpu);
+		controls.addView(cpuBtn);
 		column.addView(controls);
 
 		setContentView(root);
@@ -188,7 +182,7 @@ public class MainActivity extends Activity {
 		LinearLayout box = new LinearLayout(this);
 		box.setOrientation(LinearLayout.VERTICAL);
 		box.setGravity(Gravity.CENTER);
-		box.setPadding((int) dp(12), 0, (int) dp(12), 0);
+		box.setPadding((int) dp(10), 0, (int) dp(10), 0);
 
 		scoreValue = new TextView(this);
 		scoreValue.setTextSize(22);
@@ -212,7 +206,7 @@ public class MainActivity extends Activity {
 		LinearLayout b = new LinearLayout(this);
 		b.setOrientation(LinearLayout.VERTICAL);
 		b.setGravity(Gravity.CENTER);
-		b.setPadding((int) dp(6), (int) dp(11), (int) dp(6), (int) dp(11));
+		b.setPadding((int) dp(4), (int) dp(11), (int) dp(4), (int) dp(11));
 		b.setClickable(true);
 		b.setOnClickListener(v -> action.run());
 
@@ -225,15 +219,16 @@ public class MainActivity extends Activity {
 
 		TextView name = new TextView(this);
 		name.setText(label);
-		name.setTextSize(12);
+		name.setTextSize(11);
 		name.setTextColor(0xFFC9D0DA);
 		name.setGravity(Gravity.CENTER);
+		name.setSingleLine(true);
 		name.setPadding(0, (int) dp(3), 0, 0);
 		b.addView(name);
 
 		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
 				LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-		lp.setMargins((int) dp(5), 0, (int) dp(5), 0);
+		lp.setMargins((int) dp(4), 0, (int) dp(4), 0);
 		b.setLayoutParams(lp);
 		return b;
 	}
@@ -258,12 +253,6 @@ public class MainActivity extends Activity {
 		s.addState(new int[]{android.R.attr.state_pressed}, pressed);
 		s.addState(new int[]{}, normal);
 		return s;
-	}
-
-	private void setControlEnabled(View v, boolean en) {
-		v.setEnabled(en);
-		v.setClickable(en);
-		v.setAlpha(en ? 1f : 0.35f);
 	}
 
 	/** Paint the CPU button for its state: off (quiet) -> fast (outlined) -> hard (solid). */
@@ -301,30 +290,19 @@ public class MainActivity extends Activity {
 		cpuBtn.setBackground(g);
 	}
 
-	private void updateControls() {
-		applyCpuStyle();
-		setControlEnabled(swapBtn, cpuOn());
-	}
-
 	// --------------------------------------------------------------- game flow
 
 	private int centre() { return (Engine.N / 2) * Engine.N + Engine.N / 2; }
 
 	private int sideToMove() { return history.size() % 2 == 0 ? Engine.BLACK : Engine.WHITE; }
 
-	private String turnText() {
-		return sideToMove() == Engine.BLACK
-				? "Player 1 (Black) to move." : "Player 2 (White) to move.";
-	}
-
 	/** Cycle the one CPU through Off -> Fast -> Hard. Never restarts the game. */
 	private void cycleCpu() {
 		cpuMode = (cpuMode + 1) % 3;
 		prefs.edit().putInt("cpuMode", cpuMode).apply();
 		if (!gameOver) {
-			if (!cpuOn()) status.setText("CPU off — both sides by hand.");
-			else if (sideToMove() == humanColor) status.setText("Your move.");
-			else status.setText("CPU is thinking…");
+			if (cpuOn() && sideToMove() != humanColor) status.setText("CPU is thinking…");
+			else status.setText("Your move.");
 		}
 		updateUi();
 		if (cpuOn() && !gameOver && !thinking && sideToMove() != humanColor) think();
@@ -343,10 +321,8 @@ public class MainActivity extends Activity {
 			board.land(centre(), Engine.BLACK);
 			board.setLastMove(centre());
 			status.setText("CPU opened in the centre.");
-		} else if (cpuOn()) {
-			status.setText("Your move — place a stone.");
 		} else {
-			status.setText("CPU off — Player 1 (Black) starts.");
+			status.setText("Your move.");
 		}
 		updateUi();
 	}
@@ -363,7 +339,7 @@ public class MainActivity extends Activity {
 			updateUi();
 			think();
 		} else {
-			status.setText(cpuOn() ? "Your move." : turnText());
+			status.setText("Your move.");
 			updateUi();
 		}
 	}
@@ -380,17 +356,14 @@ public class MainActivity extends Activity {
 		if (line == null) return false;
 		gameOver = true;
 		board.setWinLine(line);
-		if (!cpuOn()) {
-			status.setText(color == Engine.BLACK ? "Player 1 wins! 🎉" : "Player 2 wins! 🎉");
-		} else if (color == humanColor) {
+		if (color == humanColor) {
 			youWins++;
 			status.setText("You win! 🎉");
-			prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		} else {
 			cpuWins++;
 			status.setText("CPU wins. Rematch?");
-			prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		}
+		prefs.edit().putInt("you", youWins).putInt("cpu", cpuWins).apply();
 		updateUi();
 		return true;
 	}
@@ -450,13 +423,12 @@ public class MainActivity extends Activity {
 			updateUi();
 			think();
 		} else {
-			status.setText(cpuOn() ? "Undone. Your move." : turnText());
+			status.setText("Your move.");
 			updateUi();
 		}
 	}
 
 	private void swapSides() {
-		if (!cpuOn()) return;
 		humanColor = 3 - humanColor;
 		prefs.edit().putInt("human", humanColor).apply();
 		newGame();
@@ -464,39 +436,25 @@ public class MainActivity extends Activity {
 
 	private void updateUi() {
 		int turn = sideToMove();
-		if (!cpuOn()) {
-			boolean blackTurn = turn == Engine.BLACK;
-			youCard.setName("Player 1");
-			youCard.setSubtitle("Black");
-			youCard.setBlack(true);
-			youCard.setActive(!gameOver && blackTurn);
-			youCard.setThinking(false);
-			cpuCard.setName("Player 2");
-			cpuCard.setSubtitle("White");
-			cpuCard.setBlack(false);
-			cpuCard.setActive(!gameOver && !blackTurn);
-			cpuCard.setThinking(false);
-			board.setGhostBlack(blackTurn);
-			board.setInputEnabled(!gameOver && !thinking);
-		} else {
-			boolean yours = !gameOver && !thinking && turn == humanColor;
-			boolean cpus = !gameOver && (thinking || turn != humanColor);
-			youCard.setName("You");
-			youCard.setBlack(humanColor == Engine.BLACK);
-			youCard.setSubtitle(humanColor == Engine.BLACK ? "Black" : "White");
-			youCard.setActive(yours);
-			youCard.setThinking(false);
-			cpuCard.setName("CPU");
-			cpuCard.setBlack(humanColor != Engine.BLACK);
-			cpuCard.setSubtitle(humanColor == Engine.BLACK ? "White" : "Black");
-			cpuCard.setActive(cpus);
-			cpuCard.setThinking(thinking && !gameOver);
-			board.setGhostBlack(humanColor == Engine.BLACK);
-			board.setInputEnabled(yours);
-		}
-		scoreBoxView.setVisibility(cpuOn() ? View.VISIBLE : View.GONE);
+		// the CPU card lights up on its turn whether the CPU plays it or a human does
+		boolean yourTurn = !gameOver && !thinking && turn == humanColor;
+		boolean cpuTurn = !gameOver && (thinking || turn != humanColor);
+
+		youCard.setBlack(humanColor == Engine.BLACK);
+		youCard.setSubtitle(humanColor == Engine.BLACK ? "Black" : "White");
+		youCard.setActive(yourTurn);
+		youCard.setThinking(false);
+
+		cpuCard.setBlack(humanColor != Engine.BLACK);
+		cpuCard.setSubtitle(humanColor == Engine.BLACK ? "White" : "Black");
+		cpuCard.setActive(cpuTurn);
+		cpuCard.setThinking(thinking && !gameOver);
+
 		scoreValue.setText(youWins + " : " + cpuWins);
-		updateControls();
+		board.setGhostBlack(turn == Engine.BLACK);
+		board.setInputEnabled(!gameOver && !thinking && (!cpuOn() || turn == humanColor));
+		applyCpuStyle();
+
 		if (!thinking) {
 			uiHandler.removeCallbacks(phantomPoller);
 			board.clearSearchPhantoms();
